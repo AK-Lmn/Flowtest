@@ -12,6 +12,18 @@ import {
 } from "./schemas";
 import { validateUrl } from "./safety";
 
+declare global {
+  interface Window {
+    __flowTestErrors?: Array<{
+      message: string;
+      url: string;
+      line: number;
+      col: number;
+      errorType: string;
+    }>;
+  }
+}
+
 /**
  * Sanitizes URLs to redact sensitive query parameters.
  */
@@ -46,8 +58,6 @@ export function sanitizeUrl(urlStr: string): string {
 interface StagehandPage {
   setViewportSize(size: { width: number; height: number }): Promise<void>;
   on(event: "console", listener: (msg: { type: () => string; text: () => string; location: () => { url?: string; lineNumber?: number } }) => void): void;
-  on(event: "pageerror", listener: (err: Error) => void): void;
-  on(event: "requestfailed", listener: (req: { method: () => string; url: () => string; resourceType: () => string; failure: () => { errorText: string } | null }) => void): void;
   route(
     url: string,
     handler: (
@@ -69,6 +79,8 @@ interface StagehandPage {
     press(key: string): Promise<void>;
   };
   screenshot(options?: { type?: string; quality?: number }): Promise<Buffer>;
+  addInitScript(script: () => void): Promise<void>;
+  evaluate<R = unknown>(fn: () => R): Promise<R>;
 }
 
 /**
@@ -310,7 +322,7 @@ export async function runTestPlan(
     const height = plan.viewport === "desktop" ? 720 : 844;
     await page.setViewportSize({ width, height });
 
-    // 2. Set up diagnostics listeners
+    // 2. Set up console listener
     page.on("console", (msg) => {
       if (consoleMessages.length < 50) {
         consoleMessages.push({
@@ -322,25 +334,31 @@ export async function runTestPlan(
       }
     });
 
-    page.on("pageerror", (err) => {
-      if (pageErrors.length < 20) {
-        pageErrors.push({
-          message: err.message.slice(0, 1000),
-          stack: err.stack?.slice(0, 2000),
-          timestamp: new Date().toISOString(),
+    // Add init script to collect page errors in window.__flowTestErrors
+    await page.addInitScript(() => {
+      window.__flowTestErrors = [];
+      window.addEventListener('error', function (event) {
+        if (!window.__flowTestErrors || window.__flowTestErrors.length >= 20) return;
+        window.__flowTestErrors.push({
+          message: event.message || 'Unknown runtime error',
+          url: event.filename || '',
+          line: event.lineno || 0,
+          col: event.colno || 0,
+          errorType: event.error ? event.error.name : 'Error'
         });
-      }
-    });
-
-    page.on("requestfailed", (req) => {
-      if (failedRequests.length < 20) {
-        failedRequests.push({
-          method: req.method(),
-          url: sanitizeUrl(req.url()),
-          resourceType: req.resourceType(),
-          failureReason: req.failure()?.errorText || "Unknown network error",
+      }, true);
+      window.addEventListener('unhandledrejection', function (event) {
+        if (!window.__flowTestErrors || window.__flowTestErrors.length >= 20) return;
+        const reason = event.reason;
+        const msg = reason ? (reason.message || String(reason)) : 'Unhandled promise rejection';
+        window.__flowTestErrors.push({
+          message: 'Unhandled Promise Rejection: ' + msg,
+          url: window.location.href,
+          line: 0,
+          col: 0,
+          errorType: 'UnhandledRejection'
         });
-      }
+      }, true);
     });
 
     // 3. Enforce Origin Isolation Policy
@@ -381,11 +399,34 @@ export async function runTestPlan(
       }
     };
 
+    const fetchPageErrors = async () => {
+      try {
+        const rawErrors = await page.evaluate(() => {
+          const errs = window.__flowTestErrors || [];
+          window.__flowTestErrors = [];
+          return errs;
+        });
+
+        for (const err of rawErrors) {
+          if (pageErrors.length >= 20) break;
+          const sanitizedUrl = sanitizeUrl(err.url).slice(0, 500);
+          const sanitizedMsg = err.message.slice(0, 1000);
+          pageErrors.push({
+            message: `[${err.errorType}] ${sanitizedMsg} (${sanitizedUrl}:${err.line}:${err.col})`,
+            timestamp: new Date().toISOString(),
+          });
+        }
+      } catch {
+        // Safe catch to prevent crashing the test run
+      }
+    };
+
     try {
       await page.goto(plan.startUrl, {
         waitUntil: "domcontentloaded",
         timeout: 30000,
       });
+      await fetchPageErrors();
       await captureScreenshot();
       finalUrl = sanitizeUrl(page.url());
     } catch (err: unknown) {
@@ -536,6 +577,8 @@ export async function runTestPlan(
       if (screenshotId) {
         await captureScreenshot(step.id);
       }
+
+      await fetchPageErrors();
 
       stepResults.push({
         id: step.id,

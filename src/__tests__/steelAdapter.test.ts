@@ -15,6 +15,8 @@ vi.mock("@browserbasehq/stagehand", () => {
     url: vi.fn().mockReturnValue("https://example.com/dashboard"),
     title: vi.fn().mockResolvedValue("Dashboard"),
     screenshot: vi.fn().mockResolvedValue(Buffer.from("mock-screenshot-bytes")),
+    addInitScript: vi.fn().mockResolvedValue(undefined),
+    evaluate: vi.fn().mockResolvedValue([]),
   };
 
   class MockStagehand {

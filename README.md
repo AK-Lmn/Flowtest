@@ -145,3 +145,5 @@ This application is ready for Vercel deployment:
 - **CAPTCHA Bypass:** FlowTest does not include CAPTCHA solving, destructive accounts actions, payment checkout steps, or arbitrary JS execution.
 - **Rate Limiting:** Public deployments require platform-level rate limiting (e.g. Vercel KV rate limits or Cloudflare WAF) to protect against execution abuse.
 - **Sandbox Boundary:** While cloud browsers run in isolated containers, they do not guarantee complete security if testing unauthorized, untrusted websites.
+- **Network Request Failures:** Failed network requests diagnostics collection is temporarily unavailable with the current Stagehand v3 Page adapter, as the adapter restricts custom Playwright-style event subscriptions (e.g., `requestfailed`).
+
