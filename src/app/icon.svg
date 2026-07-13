@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" fill="none">
+  <!-- Browser Frame -->
+  <rect x="2" y="4" width="28" height="24" rx="3" fill="#0f172a" stroke="#10b981" stroke-width="2"/>
+  <!-- Browser Header Bar -->
+  <line x1="2" y1="10" x2="30" y2="10" stroke="#10b981" stroke-width="1.5"/>
+  <!-- Browser Dots -->
+  <circle cx="5" cy="7" r="1.2" fill="#10b981"/>
+  <circle cx="8" cy="7" r="1.2" fill="#10b981"/>
+  <circle cx="11" cy="7" r="1.2" fill="#10b981"/>
+  <!-- Connected Route Nodes -->
+  <circle cx="8" cy="19" r="2" fill="#0f172a" stroke="#10b981" stroke-width="1.5"/>
+  <line x1="10" y1="19" x2="16" y2="19" stroke="#10b981" stroke-width="1.5" stroke-dasharray="1 1"/>
+  <circle cx="18" cy="19" r="2" fill="#0f172a" stroke="#10b981" stroke-width="1.5"/>
+  <line x1="19.5" y1="17.5" x2="22.5" y2="14.5" stroke="#10b981" stroke-width="1.5"/>
+  <!-- Check Mark -->
+  <path d="M20 14.5l2.5 2.5 5 -5" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
