@@ -497,11 +497,12 @@ export default function Home() {
             </div>
 
             {/* Check for missing environment credentials to offer a friendly help state */}
-            {errorMessage.includes("BROWSERBASE_API_KEY") && (
+            {(errorMessage.includes("STEEL_API_KEY") || errorMessage.includes("GEMINI_API_KEY")) && (
               <div className="border border-slate-800 bg-slate-900/60 rounded-lg p-4 text-left space-y-2 text-xs text-slate-400">
                 <span className="font-bold text-slate-200 uppercase tracking-wide">Developer Setup Help</span>
                 <p>To run real cloud tests, create a file named <code className="bg-slate-800 px-1 py-0.5 rounded text-white">.env.local</code> in the root folder and add:</p>
-                <pre className="bg-slate-950 p-2.5 rounded font-mono text-emerald-400">BROWSERBASE_API_KEY=your_key_here</pre>
+                <pre className="bg-slate-950 p-2.5 rounded font-mono text-emerald-400">STEEL_API_KEY=your_key_here
+GEMINI_API_KEY=your_key_here</pre>
               </div>
             )}
 

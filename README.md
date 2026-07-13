@@ -2,7 +2,7 @@
 
 > Describe the flow. Watch it prove itself.
 
-FlowTest is a natural-language browser flow tester for developers and students. It converts plain-English instructions into a bounded, structured test plan, executes it in an isolated cloud browser via Stagehand and Browserbase, and generates a detailed report complete with screenshots, console logs, and network diagnostics.
+FlowTest is a natural-language browser flow tester for developers and students. It converts plain-English instructions into a bounded, structured test plan, executes it in an isolated cloud browser via Stagehand and Steel, and generates a detailed report complete with screenshots, console logs, and network diagnostics.
 
 ---
 
@@ -23,7 +23,7 @@ This MVP is built to run autonomously on server infrastructure without storing c
 - **Plain-English Flow Input:** Write instructions like *"Click the Sign in button"* or *"Verify that the Continue button is visible"*.
 - **Structured Test Planning:** Pre-validates instructions and converts them into a strict, typed schema before execution.
 - **Safe URL & SSRF Protection:** Enforces HTTP/HTTPS protocols, resolves hostnames server-side, blocks localhost, private network ranges (RFC 1918, RFC 4193), and limits browser execution strictly to the start origin.
-- **Cloud-Native Execution:** Runs headlessly via Stagehand v3 on Browserbase cloud sessions.
+- **Cloud-Native Execution:** Runs headlessly via Stagehand v3 on Steel cloud sessions.
 - **Rich Diagnostics:** Captures console logs, unhandled page errors, failed network requests (with redacted sensitive parameters), and up to 4 high-resolution screenshots.
 - **Zero-Storage Privacy:** Keeps all results, screenshots, and logs purely in-memory/in-session on the client side.
 - **Export Formats:** Copy Markdown test reports or download structured JSON.
@@ -37,8 +37,9 @@ FlowTest is built on the following stack:
 2. **Tailwind CSS:** Modern styling using a slate/emerald theme.
 3. **Zod:** Runtime validation for plans, requests, and extraction schemas.
 4. **Stagehand v3:** AI-native browser automation library running on Chrome DevTools Protocol (CDP).
-5. **Browserbase:** Headless cloud browser infrastructure.
-6. **Vitest & React Testing Library:** Fast, mocked test runner.
+5. **Steel:** Headless cloud browser infrastructure.
+6. **Google Gemini:** Inference engine for Stagehand's natural-language actions.
+7. **Vitest & React Testing Library:** Fast, mocked test runner.
 
 ### Execution Flow:
 ```
@@ -51,7 +52,7 @@ FlowTest is built on the following stack:
 [Plan Generator]           ──► (Translates text steps to JSON schemas via Rule-Engine / Gemini)
       │
       ▼
-[Cloud Browser (Browserbase)] ──► (Stagehand Page opens, binds routing to origin, executes steps)
+[Cloud Browser (Steel)]    ──► (Stagehand Page opens, binds routing to origin, executes steps)
       │
       ▼
 [Diagnostics Collection]   ──► (Filters logs, exceptions, failed network requests, screenshots)
@@ -68,13 +69,11 @@ Create a `.env.local` file in the root directory:
 
 ```bash
 # Required for live cloud browser execution
-BROWSERBASE_API_KEY=your_browserbase_api_key
+STEEL_API_KEY=your_steel_api_key
+GEMINI_API_KEY=your_gemini_api_key
 
 # Optional: Run local testing with simulated browser actions (requires no keys)
 MOCK_BROWSER=false
-
-# Optional: Separate Gemini API key (falls back to Browserbase Model Gateway if omitted)
-GEMINI_API_KEY=your_gemini_api_key
 ```
 
 ---
@@ -108,16 +107,16 @@ GEMINI_API_KEY=your_gemini_api_key
 
 ## Live Smoke Test Instructions
 
-To verify the integration with Browserbase and Stagehand:
-1. Ensure your `.env.local` has a valid `BROWSERBASE_API_KEY`.
+To verify the integration with Steel and Stagehand:
+1. Ensure your `.env.local` has a valid `STEEL_API_KEY` and `GEMINI_API_KEY`.
 2. Ensure `MOCK_BROWSER` is set to `false`.
 3. Start the application locally and run the "Homepage Smoke Test" template.
 4. Verify that:
-   - A cloud session starts inside your Browserbase dashboard.
+   - A cloud session starts inside your Steel dashboard.
    - Initial navigation screenshot compiles.
    - Assertions execute and report passed.
    - Browser logs are correctly collected.
-   - The session closes cleanly in Vercel/Node log records.
+   - The session closes cleanly in Steel log records.
 
 ---
 
@@ -134,14 +133,14 @@ To verify the integration with Browserbase and Stagehand:
 
 This application is ready for Vercel deployment:
 1. Import the repository into Vercel.
-2. Add `BROWSERBASE_API_KEY` (and optionally `GEMINI_API_KEY`) as Environment Variables in project settings.
+2. Add `STEEL_API_KEY` and `GEMINI_API_KEY` as Environment Variables in project settings.
 3. Deploy! Next.js will automatically configure the `/api/test-run` Node.js route handler to use a 60s timeout duration.
 
 ---
 
 ## Known MVP Limitations & Disclaimers
 
-- **Provider Costs:** Cloud browser execution runs real instances on Browserbase and may incur provider costs or deduct quota credits depending on your plan.
+- **Provider Costs:** Cloud browser execution runs real instances on Steel and may incur provider costs or deduct quota credits depending on your plan.
 - **Single Tab Limit:** The MVP is restricted to a single browser tab. Multi-tab workflows, file uploads, and downloads are not supported.
 - **CAPTCHA Bypass:** FlowTest does not include CAPTCHA solving, destructive accounts actions, payment checkout steps, or arbitrary JS execution.
 - **Rate Limiting:** Public deployments require platform-level rate limiting (e.g. Vercel KV rate limits or Cloudflare WAF) to protect against execution abuse.

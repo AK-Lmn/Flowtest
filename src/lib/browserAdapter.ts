@@ -72,7 +72,7 @@ interface StagehandPage {
 }
 
 /**
- * Runs a validated TestPlan in an isolated cloud browser via Stagehand and Browserbase.
+ * Runs a validated TestPlan in an isolated cloud browser via Stagehand and Steel.
  */
 export async function runTestPlan(
   plan: TestPlan,
@@ -82,14 +82,24 @@ export async function runTestPlan(
   const startTime = Date.now();
 
   const isMock = process.env.MOCK_BROWSER === "true";
-  const apiKey = process.env.BROWSERBASE_API_KEY;
+  const steelApiKey = process.env.STEEL_API_KEY;
+  const geminiApiKey = process.env.GEMINI_API_KEY;
 
-  if (!apiKey && !isMock) {
-    return createBlockedResult(
-      plan,
-      "BROWSERBASE_API_KEY is not configured on the server. Please add it to your environment variables.",
-      startedAt
-    );
+  if (!isMock) {
+    if (!steelApiKey) {
+      return createBlockedResult(
+        plan,
+        "STEEL_API_KEY is not configured on the server. Please add it to your environment variables.",
+        startedAt
+      );
+    }
+    if (!geminiApiKey) {
+      return createBlockedResult(
+        plan,
+        "GEMINI_API_KEY is not configured on the server. Please add it to your environment variables.",
+        startedAt
+      );
+    }
   }
 
   // Define collections
@@ -243,14 +253,46 @@ export async function runTestPlan(
   }
 
   // ----------------------------------------------------
-  // Live Browserbase / Stagehand Execution
+  // Live Steel / Stagehand Execution
   // ----------------------------------------------------
   let stagehand: Stagehand | null = null;
+  let sessionId: string | null = null;
+
   try {
+    // 1. Create Steel Browser Session
+    const steelSessionRes = await fetch("https://api.steel.dev/v1/sessions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "steel-api-key": steelApiKey || "",
+      },
+      body: JSON.stringify({
+        timeout: CONFIG_LIMITS.maxRunDurationMs,
+      }),
+    });
+
+    if (!steelSessionRes.ok) {
+      const errorText = await steelSessionRes.text();
+      throw new Error(`Failed to create Steel browser session: ${steelSessionRes.status} ${errorText}`);
+    }
+
+    const session = await steelSessionRes.json() as { id: string; websocketUrl: string };
+    sessionId = session.id;
+
+    // 2. Construct CDP URL
+    const separator = session.websocketUrl.includes("?") ? "&" : "?";
+    const cdpUrl = `${session.websocketUrl}${separator}apiKey=${steelApiKey}`;
+
+    // 3. Connect Stagehand via CDP
     stagehand = new Stagehand({
-      env: "BROWSERBASE",
-      apiKey: apiKey,
-      model: "google/gemini-2.5-flash", // Utilizes Model Gateway
+      env: "LOCAL",
+      localBrowserLaunchOptions: {
+        cdpUrl,
+      },
+      model: {
+        modelName: "google/gemini-2.5-flash",
+        apiKey: geminiApiKey,
+      },
       verbose: 1,
     });
 
@@ -517,6 +559,18 @@ export async function runTestPlan(
         await stagehand.close();
       } catch (err) {
         console.error("Error closing Stagehand session:", err);
+      }
+    }
+    if (sessionId) {
+      try {
+        await fetch(`https://api.steel.dev/v1/sessions/${sessionId}/release`, {
+          method: "POST",
+          headers: {
+            "steel-api-key": steelApiKey || "",
+          },
+        });
+      } catch (err) {
+        console.error("Error releasing Steel session:", err);
       }
     }
   }
