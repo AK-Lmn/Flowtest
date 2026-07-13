@@ -21,6 +21,7 @@ declare global {
       col: number;
       errorType: string;
     }>;
+    __flowTestBlockedNavigations?: string[];
   }
 }
 
@@ -56,31 +57,22 @@ export function sanitizeUrl(urlStr: string): string {
 }
 
 interface StagehandPage {
-  setViewportSize(size: { width: number; height: number }): Promise<void>;
+  setViewportSize(width: number, height: number): Promise<void>;
   on(event: "console", listener: (msg: { type: () => string; text: () => string; location: () => { url?: string; lineNumber?: number } }) => void): void;
-  route(
-    url: string,
-    handler: (
-      route: { abort: (reason?: string) => Promise<void>; continue: () => Promise<void> },
-      req: { url: () => string; isNavigationRequest: () => boolean }
-    ) => void
-  ): Promise<void>;
   goto(url: string, options?: { waitUntil?: string; timeout?: number }): Promise<unknown>;
   url(): string;
   title(): Promise<string>;
   locator(selector: string): {
-    waitFor(options?: { state?: string; timeout?: number }): Promise<void>;
     click(): Promise<void>;
     fill(value: string): Promise<void>;
   };
   act(instruction: string): Promise<void>;
   extract<T>(instruction: string, schema: z.ZodType<T>): Promise<T>;
-  keyboard: {
-    press(key: string): Promise<void>;
-  };
+  keyPress(key: string): Promise<void>;
   screenshot(options?: { type?: string; quality?: number }): Promise<Buffer>;
   addInitScript(script: () => void): Promise<void>;
   evaluate<R = unknown>(fn: () => R): Promise<R>;
+  waitForSelector(selector: string, options?: { state?: string; timeout?: number }): Promise<boolean>;
 }
 
 /**
@@ -320,7 +312,7 @@ export async function runTestPlan(
     // 1. Enforce Viewport Size
     const width = plan.viewport === "desktop" ? 1280 : 390;
     const height = plan.viewport === "desktop" ? 720 : 844;
-    await page.setViewportSize({ width, height });
+    await page.setViewportSize(width, height);
 
     // 2. Set up console listener
     page.on("console", (msg) => {
@@ -333,6 +325,67 @@ export async function runTestPlan(
         });
       }
     });
+
+    // Install context navigation guard script before any action/navigation
+    await context.addInitScript((approvedOriginStr: string) => {
+      window.__flowTestBlockedNavigations = [];
+      
+      const isSameOrigin = (urlStr: string) => {
+        try {
+          const url = new URL(urlStr, window.location.href);
+          return url.origin === approvedOriginStr;
+        } catch {
+          return false;
+        }
+      };
+
+      // Intercept link clicks in capture phase
+      window.addEventListener('click', (event) => {
+        let target = event.target as HTMLElement | null;
+        while (target && target.tagName !== 'A') {
+          target = target.parentElement;
+        }
+        if (target && target.tagName === 'A') {
+          const href = target.getAttribute('href');
+          if (href && !href.startsWith('#') && !href.startsWith('javascript:')) {
+            if (!isSameOrigin(href)) {
+              event.preventDefault();
+              event.stopPropagation();
+              if (window.__flowTestBlockedNavigations) {
+                window.__flowTestBlockedNavigations.push(new URL(href, window.location.href).toString());
+              }
+            }
+          }
+        }
+      }, true);
+
+      // Intercept form submissions
+      window.addEventListener('submit', (event) => {
+        const form = event.target as HTMLFormElement;
+        const action = form.getAttribute('action') || window.location.href;
+        if (!isSameOrigin(action)) {
+          event.preventDefault();
+          event.stopPropagation();
+          if (window.__flowTestBlockedNavigations) {
+            window.__flowTestBlockedNavigations.push(new URL(action, window.location.href).toString());
+          }
+        }
+      }, true);
+
+      // Override window.open
+      const originalOpen = window.open;
+      window.open = (url, target, features) => {
+        if (url) {
+          if (!isSameOrigin(String(url))) {
+            if (window.__flowTestBlockedNavigations) {
+              window.__flowTestBlockedNavigations.push(new URL(String(url), window.location.href).toString());
+            }
+            return null;
+          }
+        }
+        return originalOpen(url, target, features);
+      };
+    }, approvedOrigin);
 
     // Add init script to collect page errors in window.__flowTestErrors
     await page.addInitScript(() => {
@@ -361,28 +414,51 @@ export async function runTestPlan(
       }, true);
     });
 
-    // 3. Enforce Origin Isolation Policy
-    await page.route("**/*", (route, req) => {
+    const assertPageStillAllowed = (currentUrl: string, approvedOriginStr: string) => {
       try {
-        const reqUrl = new URL(req.url());
-        const isNavigation = req.isNavigationRequest();
-        
-        if (isNavigation && reqUrl.origin !== approvedOrigin) {
-          // Block external navigation attempts
-          console.warn(`Blocking navigation attempt to external origin: ${reqUrl.origin}`);
-          route.abort("blockedbyclient");
-        } else {
-          route.continue();
+        const parsed = new URL(currentUrl);
+        if (parsed.origin !== approvedOriginStr) {
+          throw new Error(`BLOCKED_DESTINATION: Active page left the approved origin: ${parsed.origin}`);
         }
-      } catch {
-        route.continue();
+      } catch (e: unknown) {
+        const err = e as Error;
+        if (err.message && err.message.startsWith("BLOCKED_DESTINATION")) {
+          throw err;
+        }
+        throw new Error(`BLOCKED_DESTINATION: Invalid URL format or external origin: ${currentUrl}`);
       }
-    });
+    };
+
+    const checkBlockedNavigations = async () => {
+      try {
+        const blockedNavs = await page.evaluate(() => {
+          const navs = window.__flowTestBlockedNavigations || [];
+          window.__flowTestBlockedNavigations = [];
+          return navs;
+        });
+        if (blockedNavs.length > 0) {
+          throw new Error(`BLOCKED_DESTINATION: Navigation to external origin blocked: ${blockedNavs[0]}`);
+        }
+      } catch (e) {
+        const err = e as Error;
+        if (err.message && err.message.startsWith("BLOCKED_DESTINATION")) {
+          throw err;
+        }
+      }
+    };
+
+    const checkExtraPages = () => {
+      const activePages = context.pages();
+      if (activePages.length > 1) {
+        throw new Error(`BLOCKED_DESTINATION: Multiple pages/tabs detected. Only a single page is supported.`);
+      }
+    };
 
     // Helper to capture a compressed screenshot safely
     const captureScreenshot = async (stepId?: string) => {
       if (screenshots.length >= CONFIG_LIMITS.maxScreenshotCount) return;
       try {
+        assertPageStillAllowed(page.url(), approvedOrigin);
         const screenshotBuf = await page.screenshot({
           type: "jpeg",
           quality: 75,
@@ -426,12 +502,23 @@ export async function runTestPlan(
         waitUntil: "domcontentloaded",
         timeout: 30000,
       });
-      await fetchPageErrors();
-      await captureScreenshot();
       finalUrl = sanitizeUrl(page.url());
+      assertPageStillAllowed(finalUrl, approvedOrigin);
+      await fetchPageErrors();
+      await checkBlockedNavigations();
+      checkExtraPages();
+      await captureScreenshot();
     } catch (err: unknown) {
       status = "error";
       const error = err as Error;
+      if (error.message && error.message.startsWith("BLOCKED_DESTINATION")) {
+        return createBlockedResult(
+          plan,
+          "The test was stopped because the browser attempted to leave the approved website.",
+          startedAt,
+          Date.now() - startTime
+        );
+      }
       return createBlockedResult(
         plan,
         `Navigation to start URL failed: ${error.message || error}`,
@@ -467,6 +554,11 @@ export async function runTestPlan(
           throw new Error("TEST_TIMEOUT: Maximum test run duration exceeded.");
         }
 
+        // Assert safety before step execution
+        assertPageStillAllowed(page.url(), approvedOrigin);
+        await checkBlockedNavigations();
+        checkExtraPages();
+
         switch (step.kind) {
           case "navigate": {
             // Only allow navigating inside original approved origin
@@ -491,7 +583,7 @@ export async function runTestPlan(
 
           case "press": {
             if (step.value) {
-              await page.keyboard.press(step.value);
+              await page.keyPress(step.value);
             } else {
               await page.act(step.instruction);
             }
@@ -500,7 +592,7 @@ export async function runTestPlan(
 
           case "wait": {
             if (step.target) {
-              await page.locator(step.target).waitFor({ state: "visible", timeout: 10000 });
+              await page.waitForSelector(step.target, { state: "visible", timeout: 10000 });
             } else {
               const waitMs = parseInt(step.value || "2000", 10);
               await new Promise((r) => setTimeout(r, Math.min(waitMs, 10000)));
@@ -561,11 +653,24 @@ export async function runTestPlan(
           default:
             throw new Error(`Unsupported step kind: ${step.kind}`);
         }
+
+        // Assert safety after step execution
+        assertPageStillAllowed(page.url(), approvedOrigin);
+        await checkBlockedNavigations();
+        checkExtraPages();
       } catch (err: unknown) {
         stepPassed = false;
-        status = "failed";
         const error = err as Error;
-        stepMessage = error.message || "Unknown execution error";
+        if (error.message && error.message.startsWith("BLOCKED_DESTINATION")) {
+          status = "blocked";
+          stepMessage = "The test was stopped because the browser attempted to leave the approved website.";
+        } else if (error.message && (error.message.includes("not found") || error.message.includes("is not visible") || error.message.includes("was not found"))) {
+          status = "failed";
+          stepMessage = "The requested page element could not be found.";
+        } else {
+          status = "failed";
+          stepMessage = error.message || "Unknown execution error";
+        }
         abortedOrFailed = true;
       }
 
@@ -595,9 +700,39 @@ export async function runTestPlan(
   } catch (err: unknown) {
     status = "error";
     const error = err as Error;
+    const msg = error.message || String(error);
+    
+    // Map setup & provider errors to friendly messages
+    let friendlyMessage = "The temporary cloud browser could not be initialized. Please retry the test.";
+    
+    if (msg.startsWith("BLOCKED_DESTINATION")) {
+      status = "blocked";
+      friendlyMessage = "The test was stopped because the browser attempted to leave the approved website.";
+    } else if (
+      msg.includes("quota") ||
+      msg.includes("billing") ||
+      msg.includes("limit") ||
+      msg.includes("credit") ||
+      msg.includes("insufficient") ||
+      msg.includes("429")
+    ) {
+      status = "blocked";
+      friendlyMessage = "The browser provider could not start this test because of an account or quota limitation.";
+    }
+
+    // Redact sensitive details in server-side logs
+    console.error("Test execution adapter encountered an error. Redacted details:", {
+      message: msg
+        .replace(/apiKey=[a-zA-Z0-9_-]+/g, "apiKey=[REDACTED]")
+        .replace(/steel-api-key:[a-zA-Z0-9_-]+/g, "steel-api-key:[REDACTED]")
+        .replace(/steel_session_[a-zA-Z0-9_-]+/g, "steel_session_[REDACTED]")
+        .replace(/wss:\/\/connect\.steel\.dev[^\s]+/g, "wss://connect.steel.dev/[REDACTED]")
+        .slice(0, 1000),
+    });
+
     return createBlockedResult(
       plan,
-      `Internal browser provider error: ${error.message || error}`,
+      friendlyMessage,
       startedAt,
       Date.now() - startTime
     );

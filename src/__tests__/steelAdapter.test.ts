@@ -3,30 +3,33 @@ import { runTestPlan } from "@/lib/browserAdapter";
 import { generatePlanDeterministic } from "@/lib/planGenerator";
 import { Stagehand } from "@browserbasehq/stagehand";
 
+const mockPage = {
+  setViewportSize: vi.fn().mockResolvedValue(undefined),
+  on: vi.fn(),
+  route: vi.fn().mockResolvedValue(undefined),
+  goto: vi.fn().mockResolvedValue(undefined),
+  act: vi.fn().mockResolvedValue(undefined),
+  extract: vi.fn().mockResolvedValue(true),
+  url: vi.fn().mockReturnValue("https://example.com/dashboard"),
+  title: vi.fn().mockResolvedValue("Dashboard"),
+  screenshot: vi.fn().mockResolvedValue(Buffer.from("mock-screenshot-bytes")),
+  addInitScript: vi.fn().mockResolvedValue(undefined),
+  evaluate: vi.fn().mockResolvedValue([]),
+  keyPress: vi.fn().mockResolvedValue(undefined),
+  waitForSelector: vi.fn().mockResolvedValue(true),
+};
+
 // Mock Stagehand
 vi.mock("@browserbasehq/stagehand", () => {
-  const mockPage = {
-    setViewportSize: vi.fn().mockResolvedValue(undefined),
-    on: vi.fn(),
-    route: vi.fn().mockResolvedValue(undefined),
-    goto: vi.fn().mockResolvedValue(undefined),
-    act: vi.fn().mockResolvedValue(undefined),
-    extract: vi.fn().mockResolvedValue(true),
-    url: vi.fn().mockReturnValue("https://example.com/dashboard"),
-    title: vi.fn().mockResolvedValue("Dashboard"),
-    screenshot: vi.fn().mockResolvedValue(Buffer.from("mock-screenshot-bytes")),
-    addInitScript: vi.fn().mockResolvedValue(undefined),
-    evaluate: vi.fn().mockResolvedValue([]),
-  };
-
   class MockStagehand {
     init = vi.fn().mockResolvedValue(undefined);
     close = vi.fn().mockResolvedValue(undefined);
     context = {
-      activePage: vi.fn().mockReturnValue(mockPage),
-      pages: vi.fn().mockReturnValue([mockPage]),
-      newPage: vi.fn().mockResolvedValue(mockPage),
+      activePage: vi.fn().mockImplementation(() => mockPage),
+      pages: vi.fn().mockImplementation(() => [mockPage]),
+      newPage: vi.fn().mockImplementation(() => Promise.resolve(mockPage)),
       setActivePage: vi.fn(),
+      addInitScript: vi.fn().mockResolvedValue(undefined),
     };
   }
 
@@ -152,6 +155,7 @@ describe("Steel Stagehand execution adapter tests", () => {
         pages: vi.fn().mockReturnValue([]),
         newPage: vi.fn().mockResolvedValue({}),
         setActivePage: vi.fn(),
+        addInitScript: vi.fn().mockResolvedValue(undefined),
       };
     }
 
@@ -185,5 +189,75 @@ describe("Steel Stagehand execution adapter tests", () => {
     expect(payloadStr).not.toContain("test-gemini-key-super-secret");
     expect(payloadStr).not.toContain("wss://connect.steel.dev");
     expect(payloadStr).not.toContain("steel_session_123");
+  });
+
+  it("should never register pageerror, requestfailed, or page.route listeners, and only register console on page", async () => {
+    process.env.STEEL_API_KEY = "test-steel-key";
+    process.env.GEMINI_API_KEY = "test-gemini-key";
+
+    const plan = generatePlanDeterministic("Test", "https://example.com", "desktop", "Click the button");
+    await runTestPlan(plan);
+
+    const onMock = mockPage.on;
+    const events = onMock.mock.calls.map((call) => call[0]);
+    expect(events).toContain("console");
+    expect(events).not.toContain("pageerror");
+    expect(events).not.toContain("requestfailed");
+    expect(mockPage.route).not.toHaveBeenCalled();
+  });
+
+  it("should stop execution and return blocked status when navigating to cross-origin", async () => {
+    process.env.STEEL_API_KEY = "test-steel-key";
+    process.env.GEMINI_API_KEY = "test-gemini-key";
+
+    mockPage.url.mockReturnValueOnce("https://example.com") // Initial page.goto
+               .mockReturnValueOnce("https://example.com") // Initial validation
+               .mockReturnValueOnce("https://example.com") // step 1 start check
+               .mockReturnValueOnce("https://malicious-external-site.com"); // step 1 action complete check
+
+    const plan = {
+      title: "Test Blocked Navigation",
+      startUrl: "https://example.com",
+      viewport: "desktop" as const,
+      steps: [
+        { id: "step_1", instruction: "Click the link", kind: "click" as const },
+        { id: "step_2", instruction: "Fill the form", kind: "fill" as const }
+      ]
+    };
+
+    const result = await runTestPlan(plan);
+    expect(result.status).toBe("blocked");
+    expect(result.steps[0].message).toContain("The test was stopped because the browser attempted to leave the approved website.");
+    expect(result.steps[1].status).toBe("skipped");
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "https://api.steel.dev/v1/sessions/steel_session_123/release",
+      expect.objectContaining({ method: "POST" })
+    );
+  });
+
+  it("should block execution when multiple pages/tabs are detected in the context", async () => {
+    process.env.STEEL_API_KEY = "test-steel-key";
+    process.env.GEMINI_API_KEY = "test-gemini-key";
+
+    vi.mocked(Stagehand).mockImplementationOnce(function () {
+      class MockStagehandMultiPage {
+        init = vi.fn().mockResolvedValue(undefined);
+        close = vi.fn().mockResolvedValue(undefined);
+        context = {
+          activePage: vi.fn().mockImplementation(() => mockPage),
+          pages: vi.fn().mockImplementation(() => [mockPage, mockPage]),
+          newPage: vi.fn().mockImplementation(() => Promise.resolve(mockPage)),
+          setActivePage: vi.fn(),
+          addInitScript: vi.fn().mockResolvedValue(undefined),
+        };
+      }
+      return new MockStagehandMultiPage() as unknown as Stagehand;
+    });
+
+    const plan = generatePlanDeterministic("Test", "https://example.com", "desktop", "Click the button");
+    const result = await runTestPlan(plan);
+    expect(result.status).toBe("blocked");
+    expect(result.pageErrors[0].message).toContain("The test was stopped because the browser attempted to leave the approved website.");
   });
 });

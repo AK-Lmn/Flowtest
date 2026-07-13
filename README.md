@@ -2,7 +2,7 @@
 
 > Describe the flow. Watch it prove itself.
 
-FlowTest is a natural-language browser flow tester for developers and students. It converts plain-English instructions into a bounded, structured test plan, executes it in an isolated cloud browser via Stagehand and Steel, and generates a detailed report complete with screenshots, console logs, and network diagnostics.
+FlowTest is a natural-language browser flow tester for developers and students. It converts plain-English instructions into a bounded, structured test plan, executes it in a temporary cloud browser via Stagehand and Steel, and generates a detailed report complete with screenshots, console logs, and network diagnostics.
 
 ---
 
@@ -144,6 +144,10 @@ This application is ready for Vercel deployment:
 - **Single Tab Limit:** The MVP is restricted to a single browser tab. Multi-tab workflows, file uploads, and downloads are not supported.
 - **CAPTCHA Bypass:** FlowTest does not include CAPTCHA solving, destructive accounts actions, payment checkout steps, or arbitrary JS execution.
 - **Rate Limiting:** Public deployments require platform-level rate limiting (e.g. Vercel KV rate limits or Cloudflare WAF) to protect against execution abuse.
-- **Sandbox Boundary:** While cloud browsers run in isolated containers, they do not guarantee complete security if testing unauthorized, untrusted websites.
+- **Network Routing Limitations:** The current Stagehand Page adapter does not expose full network request interception.
+- **Sandbox Boundary & Navigation Guard:** 
+  - FlowTest validates the supplied destination server-side and checks the active origin before and after every action.
+  - FlowTest blocks observable cross-origin link, form, and popup navigation via in-page init scripts.
+  - However, this is a bounded navigation guard, not a hardened network sandbox. It does not guarantee complete security if testing unauthorized, untrusted websites.
 - **Network Request Failures:** Failed network requests diagnostics collection is temporarily unavailable with the current Stagehand v3 Page adapter, as the adapter restricts custom Playwright-style event subscriptions (e.g., `requestfailed`).
 

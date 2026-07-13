@@ -257,7 +257,7 @@ export default function Home() {
           </div>
           <div className="flex items-center space-x-2 text-xs text-slate-400 bg-[#161b26] border border-[#232d42] px-3 py-1.5 rounded-lg">
             <Lock className="h-3 w-3 text-emerald-500" />
-            <span>Secure Cloud Sandbox</span>
+            <span>Temporary Cloud Browser</span>
           </div>
         </div>
       </header>
@@ -378,9 +378,7 @@ export default function Home() {
               <div className="mt-6 border-t border-[#232d42] pt-4 flex items-start space-x-3 text-xs text-slate-400">
                 <Lock className="h-4 w-4 text-emerald-500 shrink-0 mt-0.5" />
                 <p>
-                  <strong>Privacy Note:</strong> FlowTest executes tests in an isolated, temporary cloud browser.
-                  Do not enter passwords, private tokens, or personal account details in the test steps.
-                  Only test public websites you own or are authorized to test.
+                  <strong>Privacy Note:</strong> FlowTest runs tests in a temporary cloud browser. Do not enter passwords, private tokens, or personal account data. Only test public websites you own or are authorized to test.
                 </p>
               </div>
             </section>
@@ -464,7 +462,7 @@ export default function Home() {
 
             <div className="flex flex-col items-center space-y-3">
               <span className="text-xs text-slate-500">
-                Stagehand is executing automation on Browserbase cloud infrastructure.
+                FlowTest is running this test in a temporary Steel cloud browser.
               </span>
               <button
                 type="button"
@@ -837,7 +835,7 @@ GEMINI_API_KEY=your_key_here</pre>
       <footer className="border-t border-[#232d42] bg-[#0b0f19] py-6 px-4 text-center text-xs text-slate-500">
         <p>© {new Date().getFullYear()} FlowTest. Bounded cloud browser testing. All rights reserved.</p>
         <p className="mt-1">
-          Designed for developers and students. Tests are run on demand and temporary sessions are destroyed immediately after run completion.
+          Temporary cloud sessions are released after each run.
         </p>
       </footer>
 
