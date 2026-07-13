@@ -20,7 +20,12 @@ vi.mock("@browserbasehq/stagehand", () => {
   class MockStagehand {
     init = vi.fn().mockResolvedValue(undefined);
     close = vi.fn().mockResolvedValue(undefined);
-    page = mockPage;
+    context = {
+      activePage: vi.fn().mockReturnValue(mockPage),
+      pages: vi.fn().mockReturnValue([mockPage]),
+      newPage: vi.fn().mockResolvedValue(mockPage),
+      setActivePage: vi.fn(),
+    };
   }
 
   return {
@@ -140,7 +145,12 @@ describe("Steel Stagehand execution adapter tests", () => {
     class MockStagehandFailure {
       init = vi.fn().mockRejectedValue(new Error("Stagehand connection timed out"));
       close = vi.fn().mockResolvedValue(undefined);
-      page = {} as unknown as Stagehand["page"];
+      context = {
+        activePage: vi.fn().mockReturnValue({}),
+        pages: vi.fn().mockReturnValue([]),
+        newPage: vi.fn().mockResolvedValue({}),
+        setActivePage: vi.fn(),
+      };
     }
 
     vi.mocked(Stagehand).mockImplementationOnce(function () {

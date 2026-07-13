@@ -297,7 +297,13 @@ export async function runTestPlan(
     });
 
     await stagehand.init();
-    const page = (stagehand as unknown as { page: StagehandPage }).page;
+    const context = stagehand.context;
+    let pageObj = context.activePage() ?? context.pages()[0];
+    if (!pageObj) {
+      pageObj = await context.newPage();
+    }
+    context.setActivePage(pageObj);
+    const page = pageObj as unknown as StagehandPage;
 
     // 1. Enforce Viewport Size
     const width = plan.viewport === "desktop" ? 1280 : 390;
