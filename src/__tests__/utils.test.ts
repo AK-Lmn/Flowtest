@@ -66,7 +66,7 @@ Verify that the URL contains "/login"`;
         id: "step_4",
         instruction: 'Verify that "Welcome back" is visible',
         kind: "assert-visible",
-        target: '"Welcome back"',
+        target: "Welcome back",
         value: undefined,
       });
 

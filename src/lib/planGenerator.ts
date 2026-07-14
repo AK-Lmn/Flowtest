@@ -110,12 +110,33 @@ export function generatePlanDeterministic(
       target = line;
     }
 
+    let cleanTarget = target ? target.trim() : undefined;
+    let cleanValue = value ? value.trim() : undefined;
+
+    if (cleanTarget) {
+      if (
+        (cleanTarget.startsWith('"') && cleanTarget.endsWith('"')) ||
+        (cleanTarget.startsWith("'") && cleanTarget.endsWith("'"))
+      ) {
+        cleanTarget = cleanTarget.substring(1, cleanTarget.length - 1).trim();
+      }
+    }
+
+    if (cleanValue) {
+      if (
+        (cleanValue.startsWith('"') && cleanValue.endsWith('"')) ||
+        (cleanValue.startsWith("'") && cleanValue.endsWith("'"))
+      ) {
+        cleanValue = cleanValue.substring(1, cleanValue.length - 1).trim();
+      }
+    }
+
     steps.push({
       id,
       instruction: line,
       kind,
-      target: target ? target.trim() : undefined,
-      value: value ? value.trim() : undefined,
+      target: cleanTarget || undefined,
+      value: cleanValue || undefined,
     });
   }
 
@@ -163,7 +184,7 @@ Constraints:
 Respond only with the structured JSON output adhering to the schema.`;
 
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },

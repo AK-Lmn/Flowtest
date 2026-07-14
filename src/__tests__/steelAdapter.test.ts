@@ -8,8 +8,6 @@ const mockPage = {
   on: vi.fn(),
   route: vi.fn().mockResolvedValue(undefined),
   goto: vi.fn().mockResolvedValue(undefined),
-  act: vi.fn().mockResolvedValue(undefined),
-  extract: vi.fn().mockResolvedValue(true),
   url: vi.fn().mockReturnValue("https://example.com/dashboard"),
   title: vi.fn().mockResolvedValue("Dashboard"),
   screenshot: vi.fn().mockResolvedValue(Buffer.from("mock-screenshot-bytes")),
@@ -17,6 +15,12 @@ const mockPage = {
   evaluate: vi.fn().mockResolvedValue([]),
   keyPress: vi.fn().mockResolvedValue(undefined),
   waitForSelector: vi.fn().mockResolvedValue(true),
+  targetId: vi.fn().mockReturnValue("mock-page-id-1"),
+};
+
+const mockPage2 = {
+  ...mockPage,
+  targetId: vi.fn().mockReturnValue("mock-page-id-2"),
 };
 
 // Mock Stagehand
@@ -24,6 +28,8 @@ vi.mock("@browserbasehq/stagehand", () => {
   class MockStagehand {
     init = vi.fn().mockResolvedValue(undefined);
     close = vi.fn().mockResolvedValue(undefined);
+    act = vi.fn().mockResolvedValue({ success: true, message: "done", actionDescription: "clicked", actions: [] });
+    extract = vi.fn().mockResolvedValue(true);
     context = {
       activePage: vi.fn().mockImplementation(() => mockPage),
       pages: vi.fn().mockImplementation(() => [mockPage]),
@@ -123,7 +129,7 @@ describe("Steel Stagehand execution adapter tests", () => {
     expect(stagehandConstructorArgs.env).toBe("LOCAL");
     expect(stagehandConstructorArgs.localBrowserLaunchOptions.cdpUrl).toContain("wss://connect.steel.dev");
     expect(stagehandConstructorArgs.localBrowserLaunchOptions.cdpUrl).toContain("apiKey=test-steel-key");
-    expect(stagehandConstructorArgs.model.modelName).toBe("google/gemini-2.5-flash");
+    expect(stagehandConstructorArgs.model.modelName).toBe("google/gemini-1.5-flash");
     expect(stagehandConstructorArgs.model.apiKey).toBe("test-gemini-key");
 
     // Check that Stagehand's close was called
@@ -210,10 +216,10 @@ describe("Steel Stagehand execution adapter tests", () => {
     process.env.STEEL_API_KEY = "test-steel-key";
     process.env.GEMINI_API_KEY = "test-gemini-key";
 
-    mockPage.url.mockReturnValueOnce("https://example.com") // Initial page.goto
-               .mockReturnValueOnce("https://example.com") // Initial validation
-               .mockReturnValueOnce("https://example.com") // step 1 start check
-               .mockReturnValueOnce("https://malicious-external-site.com"); // step 1 action complete check
+    mockPage.url.mockReturnValueOnce("https://example.com")   // page.goto → finalUrl assignment
+               .mockReturnValueOnce("https://example.com")   // captureScreenshot after goto
+               .mockReturnValueOnce("https://example.com")   // step 1 pre-check: assertPageStillAllowed
+               .mockReturnValueOnce("https://malicious-external-site.com"); // step 1 post-action: assertPageStillAllowed
 
     const plan = {
       title: "Test Blocked Navigation",
@@ -246,7 +252,9 @@ describe("Steel Stagehand execution adapter tests", () => {
         close = vi.fn().mockResolvedValue(undefined);
         context = {
           activePage: vi.fn().mockImplementation(() => mockPage),
-          pages: vi.fn().mockImplementation(() => [mockPage, mockPage]),
+          pages: vi.fn()
+            .mockImplementationOnce(() => [mockPage])
+            .mockImplementation(() => [mockPage, mockPage2]),
           newPage: vi.fn().mockImplementation(() => Promise.resolve(mockPage)),
           setActivePage: vi.fn(),
           addInitScript: vi.fn().mockResolvedValue(undefined),

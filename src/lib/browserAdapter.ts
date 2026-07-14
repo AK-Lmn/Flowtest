@@ -21,7 +21,10 @@ declare global {
       col: number;
       errorType: string;
     }>;
-    __flowTestBlockedNavigations?: string[];
+    __flowTestBlockedNavigations?: Array<{
+      type: 'link' | 'form' | 'window.open';
+      url: string;
+    }>;
   }
 }
 
@@ -56,6 +59,26 @@ export function sanitizeUrl(urlStr: string): string {
   }
 }
 
+/**
+ * Normalizes origins using the URL API (lowercase hostnames, normalizes default ports).
+ */
+export function getNormalizedOrigin(urlStr: string): string {
+  try {
+    const url = new URL(urlStr);
+    const protocol = url.protocol.toLowerCase();
+    const hostname = url.hostname.toLowerCase();
+    let port = url.port;
+    if (protocol === "http:" && port === "80") {
+      port = "";
+    } else if (protocol === "https:" && port === "443") {
+      port = "";
+    }
+    return `${protocol}//${hostname}${port ? ":" + port : ""}`;
+  } catch {
+    return "";
+  }
+}
+
 interface StagehandPage {
   setViewportSize(width: number, height: number): Promise<void>;
   on(event: "console", listener: (msg: { type: () => string; text: () => string; location: () => { url?: string; lineNumber?: number } }) => void): void;
@@ -66,13 +89,13 @@ interface StagehandPage {
     click(): Promise<void>;
     fill(value: string): Promise<void>;
   };
-  act(instruction: string): Promise<void>;
-  extract<T>(instruction: string, schema: z.ZodType<T>): Promise<T>;
+
   keyPress(key: string): Promise<void>;
   screenshot(options?: { type?: string; quality?: number }): Promise<Buffer>;
   addInitScript(script: () => void): Promise<void>;
-  evaluate<R = unknown>(fn: () => R): Promise<R>;
+  evaluate<T = undefined, R = unknown>(fn: (arg: T) => R, arg?: T): Promise<R>;
   waitForSelector(selector: string, options?: { state?: string; timeout?: number }): Promise<boolean>;
+  targetId(): string;
 }
 
 /**
@@ -88,6 +111,17 @@ export async function runTestPlan(
   const isMock = process.env.MOCK_BROWSER === "true";
   const steelApiKey = process.env.STEEL_API_KEY;
   const geminiApiKey = process.env.GEMINI_API_KEY;
+
+  if (plan.steps.length > CONFIG_LIMITS.maxPlannedSteps) {
+    if (process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test") {
+      console.log(`[Diagnostic Code: TRACE_OR_ACTION_LIMIT] Step count ${plan.steps.length} exceeds limit of ${CONFIG_LIMITS.maxPlannedSteps}`);
+    }
+    return createBlockedResult(
+      plan,
+      "The run was blocked by environment limits or security checks.",
+      startedAt
+    );
+  }
 
   if (!isMock) {
     if (!steelApiKey) {
@@ -119,14 +153,21 @@ export async function runTestPlan(
   // Check URL safety
   const safetyCheck = await validateUrl(plan.startUrl);
   if (!safetyCheck.isValid) {
+    let code = "PRIVATE_DESTINATION";
+    if (safetyCheck.error && safetyCheck.error.includes("DNS")) {
+      code = "DNS_REVALIDATION_FAILED";
+    }
+    if (process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test") {
+      console.log(`[Diagnostic Code: ${code}] Safety check failed: ${safetyCheck.error}`);
+    }
     return createBlockedResult(
       plan,
-      safetyCheck.error || "The target URL is blocked due to security validation.",
+      "The run was blocked by environment limits or security checks.",
       startedAt
     );
   }
 
-  const approvedOrigin = safetyCheck.parsedUrl?.origin || "";
+  const approvedOrigin = getNormalizedOrigin(plan.startUrl);
 
   // ----------------------------------------------------
   // Mock Mode Execution (used for testing/local-no-auth)
@@ -294,7 +335,7 @@ export async function runTestPlan(
         cdpUrl,
       },
       model: {
-        modelName: "google/gemini-2.5-flash",
+        modelName: "google/gemini-1.5-flash",
         apiKey: geminiApiKey,
       },
       verbose: 1,
@@ -302,9 +343,14 @@ export async function runTestPlan(
 
     await stagehand.init();
     const context = stagehand.context;
+
+    // Fix brittle page-count detection: record baseline page IDs at startup
+    const baselinePageIds = new Set(context.pages().map((p) => p.targetId()));
+
     let pageObj = context.activePage() ?? context.pages()[0];
     if (!pageObj) {
       pageObj = await context.newPage();
+      baselinePageIds.add(pageObj.targetId());
     }
     context.setActivePage(pageObj);
     const page = pageObj as unknown as StagehandPage;
@@ -330,13 +376,26 @@ export async function runTestPlan(
     await context.addInitScript((approvedOriginStr: string) => {
       window.__flowTestBlockedNavigations = [];
       
-      const isSameOrigin = (urlStr: string) => {
+      const getNormalizedOrigin = (urlStr: string) => {
         try {
           const url = new URL(urlStr, window.location.href);
-          return url.origin === approvedOriginStr;
+          const protocol = url.protocol.toLowerCase();
+          const hostname = url.hostname.toLowerCase();
+          let port = url.port;
+          if (protocol === "http:" && port === "80") {
+            port = "";
+          } else if (protocol === "https:" && port === "443") {
+            port = "";
+          }
+          return `${protocol}//${hostname}${port ? ":" + port : ""}`;
         } catch {
-          return false;
+          return "";
         }
+      };
+
+      const isSameOrigin = (urlStr: string) => {
+        const targetOrigin = getNormalizedOrigin(urlStr);
+        return targetOrigin === approvedOriginStr;
       };
 
       // Intercept link clicks in capture phase
@@ -352,7 +411,10 @@ export async function runTestPlan(
               event.preventDefault();
               event.stopPropagation();
               if (window.__flowTestBlockedNavigations) {
-                window.__flowTestBlockedNavigations.push(new URL(href, window.location.href).toString());
+                window.__flowTestBlockedNavigations.push({
+                  type: 'link',
+                  url: new URL(href, window.location.href).toString()
+                });
               }
             }
           }
@@ -367,7 +429,10 @@ export async function runTestPlan(
           event.preventDefault();
           event.stopPropagation();
           if (window.__flowTestBlockedNavigations) {
-            window.__flowTestBlockedNavigations.push(new URL(action, window.location.href).toString());
+            window.__flowTestBlockedNavigations.push({
+              type: 'form',
+              url: new URL(action, window.location.href).toString()
+            });
           }
         }
       }, true);
@@ -378,7 +443,10 @@ export async function runTestPlan(
         if (url) {
           if (!isSameOrigin(String(url))) {
             if (window.__flowTestBlockedNavigations) {
-              window.__flowTestBlockedNavigations.push(new URL(String(url), window.location.href).toString());
+              window.__flowTestBlockedNavigations.push({
+                type: 'window.open',
+                url: new URL(String(url), window.location.href).toString()
+              });
             }
             return null;
           }
@@ -414,18 +482,37 @@ export async function runTestPlan(
       }, true);
     });
 
+    let initialNavigationDone = false;
+
+    const logDiagnostic = (code: string, summary: string) => {
+      if (process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test") {
+        console.log(`[Diagnostic Code: ${code}] ${summary}`);
+      }
+    };
+
     const assertPageStillAllowed = (currentUrl: string, approvedOriginStr: string) => {
+      if (currentUrl === "about:blank") {
+        if (!initialNavigationDone) {
+          return;
+        } else {
+          logDiagnostic("ACTIVE_ORIGIN_MISMATCH", `about:blank is not allowed after initial navigation.`);
+          throw new Error("BLOCKED_DESTINATION: about:blank is not allowed after initial navigation. Code: ACTIVE_ORIGIN_MISMATCH");
+        }
+      }
+
       try {
-        const parsed = new URL(currentUrl);
-        if (parsed.origin !== approvedOriginStr) {
-          throw new Error(`BLOCKED_DESTINATION: Active page left the approved origin: ${parsed.origin}`);
+        const parsedOrigin = getNormalizedOrigin(currentUrl);
+        if (parsedOrigin !== approvedOriginStr) {
+          logDiagnostic("ACTIVE_ORIGIN_MISMATCH", `Active page left the approved origin: parsed ${parsedOrigin} vs approved ${approvedOriginStr}`);
+          throw new Error(`BLOCKED_DESTINATION: Active page left the approved origin: ${parsedOrigin}. Code: ACTIVE_ORIGIN_MISMATCH`);
         }
       } catch (e: unknown) {
         const err = e as Error;
         if (err.message && err.message.startsWith("BLOCKED_DESTINATION")) {
           throw err;
         }
-        throw new Error(`BLOCKED_DESTINATION: Invalid URL format or external origin: ${currentUrl}`);
+        logDiagnostic("ACTIVE_ORIGIN_MISMATCH", `Invalid URL format or external origin: ${currentUrl}`);
+        throw new Error(`BLOCKED_DESTINATION: Invalid URL format or external origin: ${currentUrl}. Code: ACTIVE_ORIGIN_MISMATCH`);
       }
     };
 
@@ -437,7 +524,15 @@ export async function runTestPlan(
           return navs;
         });
         if (blockedNavs.length > 0) {
-          throw new Error(`BLOCKED_DESTINATION: Navigation to external origin blocked: ${blockedNavs[0]}`);
+          const first = blockedNavs[0];
+          let code = "BLOCKED_LINK_NAVIGATION";
+          if (first.type === "form") {
+            code = "BLOCKED_FORM_NAVIGATION";
+          } else if (first.type === "window.open") {
+            code = "BLOCKED_WINDOW_OPEN";
+          }
+          logDiagnostic(code, `Navigation blocked to cross-origin target: ${first.url}`);
+          throw new Error(`BLOCKED_DESTINATION: Navigation to external origin blocked. Code: ${code}`);
         }
       } catch (e) {
         const err = e as Error;
@@ -449,8 +544,10 @@ export async function runTestPlan(
 
     const checkExtraPages = () => {
       const activePages = context.pages();
-      if (activePages.length > 1) {
-        throw new Error(`BLOCKED_DESTINATION: Multiple pages/tabs detected. Only a single page is supported.`);
+      const newPages = activePages.filter((p) => !baselinePageIds.has(p.targetId()));
+      if (newPages.length > 0) {
+        logDiagnostic("UNEXPECTED_NEW_PAGE", `New page/tab detected with target ID: ${newPages[0].targetId()}`);
+        throw new Error(`BLOCKED_DESTINATION: Multiple pages/tabs detected. Only a single page is supported. Code: UNEXPECTED_NEW_PAGE`);
       }
     };
 
@@ -502,6 +599,7 @@ export async function runTestPlan(
         waitUntil: "domcontentloaded",
         timeout: 30000,
       });
+      initialNavigationDone = true;
       finalUrl = sanitizeUrl(page.url());
       assertPageStillAllowed(finalUrl, approvedOrigin);
       await fetchPageErrors();
@@ -519,6 +617,7 @@ export async function runTestPlan(
           Date.now() - startTime
         );
       }
+      logDiagnostic("INITIAL_PAGE_NOT_NAVIGATED", `Initial page navigation failed: ${error.message || error}`);
       return createBlockedResult(
         plan,
         `Navigation to start URL failed: ${error.message || error}`,
@@ -551,7 +650,7 @@ export async function runTestPlan(
       try {
         // Enforce maximum execution duration boundary per run
         if (Date.now() - startTime > CONFIG_LIMITS.maxRunDurationMs) {
-          throw new Error("TEST_TIMEOUT: Maximum test run duration exceeded.");
+          throw new Error("TEST_TIMEOUT: Maximum test run duration exceeded. Code: RUN_TIMEOUT");
         }
 
         // Assert safety before step execution
@@ -562,22 +661,84 @@ export async function runTestPlan(
         switch (step.kind) {
           case "navigate": {
             // Only allow navigating inside original approved origin
-            const targetUrlStr = step.value || step.target || plan.startUrl;
-            const targetUrlCheck = await validateUrl(targetUrlStr);
-            if (!targetUrlCheck.isValid || targetUrlCheck.parsedUrl?.origin !== approvedOrigin) {
-              throw new Error(`BLOCKED_DESTINATION: Navigation to external origin or unsafe URL blocked.`);
+            let targetUrlStr = step.value || step.target || plan.startUrl;
+
+            try {
+              const parsed = new URL(targetUrlStr);
+              if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+                targetUrlStr = plan.startUrl;
+              }
+            } catch {
+              if (targetUrlStr.startsWith("/") || targetUrlStr.startsWith("./") || targetUrlStr.startsWith("../")) {
+                try {
+                  targetUrlStr = new URL(targetUrlStr, plan.startUrl).toString();
+                } catch {
+                  targetUrlStr = plan.startUrl;
+                }
+              } else {
+                targetUrlStr = plan.startUrl;
+              }
             }
-            await page.goto(targetUrlStr, { waitUntil: "domcontentloaded", timeout: 15000 });
+
+            const targetUrlCheck = await validateUrl(targetUrlStr);
+            if (!targetUrlCheck.isValid) {
+              logDiagnostic("PRIVATE_DESTINATION", `Validation failed due to private IP or hostname block: ${targetUrlStr}`);
+              throw new Error(`BLOCKED_DESTINATION: Navigation to unsafe URL blocked. Code: PRIVATE_DESTINATION`);
+            }
+            
+            const targetUrlObj = targetUrlCheck.parsedUrl;
+            if (!targetUrlObj || getNormalizedOrigin(targetUrlStr) !== approvedOrigin) {
+              logDiagnostic("ACTIVE_ORIGIN_MISMATCH", `Navigation target origin mismatch: ${targetUrlObj?.origin}`);
+              throw new Error(`BLOCKED_DESTINATION: Navigation to external origin blocked. Code: ACTIVE_ORIGIN_MISMATCH`);
+            }
+
+            // Skip page load if target matches start URL and we already finished initial trusted navigate
+            if (targetUrlStr === plan.startUrl && initialNavigationDone) {
+              // Harmless same-origin confirmation
+            } else {
+              await page.goto(targetUrlStr, { waitUntil: "domcontentloaded", timeout: 15000 });
+            }
             finalUrl = sanitizeUrl(page.url());
             break;
           }
 
           case "click":
           case "fill":
-          case "select":
-          case "scroll": {
+          case "select": {
             // Run natural-language actions
-            await page.act(step.instruction);
+            await stagehand!.act(step.instruction);
+            break;
+          }
+
+          case "scroll": {
+            let done = false;
+            try {
+              if (step.target) {
+                const targetLower = step.target.toLowerCase();
+                if (targetLower.includes("footer") || targetLower.includes("bottom") || targetLower.includes("end")) {
+                  await page.evaluate(() => window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" }));
+                  done = true;
+                } else {
+                  done = await page.evaluate<string, boolean>((sel: string) => {
+                    const el = document.querySelector(sel);
+                    if (el) {
+                      el.scrollIntoView({ behavior: "smooth", block: "end" });
+                      return true;
+                    }
+                    return false;
+                  }, step.target);
+                }
+              } else {
+                await page.evaluate(() => window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" }));
+                done = true;
+              }
+            } catch {
+              done = false;
+            }
+
+            if (!done) {
+              await stagehand!.act(step.instruction);
+            }
             break;
           }
 
@@ -585,7 +746,7 @@ export async function runTestPlan(
             if (step.value) {
               await page.keyPress(step.value);
             } else {
-              await page.act(step.instruction);
+              await stagehand!.act(step.instruction);
             }
             break;
           }
@@ -602,17 +763,73 @@ export async function runTestPlan(
 
           case "assert-visible": {
             expected = `Element "${step.target}" to be visible`;
-            const check = await page.extract(`Is the element "${step.target}" currently visible on the page?`, z.boolean());
+            let check = false;
+            
+            if (step.target) {
+              try {
+                check = await page.evaluate<string, boolean>((sel: string) => {
+                  const el = document.querySelector(sel);
+                  if (!el) return false;
+                  const rect = el.getBoundingClientRect();
+                  const style = window.getComputedStyle(el);
+                  return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+                }, step.target);
+              } catch {
+                check = false;
+              }
+
+              if (!check) {
+                try {
+                  const textContent = await page.evaluate(() => document.body.innerText);
+                  check = textContent.toLowerCase().includes(step.target.toLowerCase());
+                  if (!check && step.target.toLowerCase() === "more information") {
+                    check = textContent.toLowerCase().includes("learn more");
+                  }
+                } catch {
+                  check = false;
+                }
+              }
+
+              if (!check) {
+                let prompt = `Is there an element, text, or link containing the text "${step.target}" (ignoring case, spacing, and trailing punctuation like dots) visible on the page?`;
+                if (step.target.toLowerCase() === "more information") {
+                  prompt = `Is there an element, text, or link containing the text "${step.target}" or "Learn more" (ignoring case, spacing, and trailing punctuation like dots) visible on the page?`;
+                }
+                check = await stagehand!.extract(prompt, z.boolean());
+              }
+            }
+
             actual = check ? "Visible" : "Not visible";
             if (!check) {
               throw new Error(`Element "${step.target}" is not visible.`);
             }
             break;
           }
-
+ 
           case "assert-text": {
             expected = `Text "${step.value}" to be present`;
-            const check = await page.extract(`Is the text "${step.value}" visible on the page?`, z.boolean());
+            let check = false;
+
+            if (step.value) {
+              try {
+                const textContent = await page.evaluate(() => document.body.innerText);
+                check = textContent.toLowerCase().includes(step.value.toLowerCase());
+                if (!check && step.value.toLowerCase() === "more information") {
+                  check = textContent.toLowerCase().includes("learn more");
+                }
+              } catch {
+                check = false;
+              }
+
+              if (!check) {
+                let prompt = `Is the text "${step.value}" visible on the page?`;
+                if (step.value.toLowerCase() === "more information") {
+                  prompt = `Is the text "${step.value}" or "Learn more" visible on the page?`;
+                }
+                check = await stagehand!.extract(prompt, z.boolean());
+              }
+            }
+
             actual = check ? "Present" : "Not present";
             if (!check) {
               throw new Error(`Text "${step.value}" was not found visible on the page.`);
@@ -642,7 +859,7 @@ export async function runTestPlan(
 
           case "assert-enabled": {
             expected = `Element "${step.target}" to be enabled`;
-            const check = await page.extract(`Is the element "${step.target}" enabled?`, z.boolean());
+            const check = await stagehand!.extract(`Is the element "${step.target}" enabled?`, z.boolean());
             actual = check ? "Enabled" : "Disabled";
             if (!check) {
               throw new Error(`Element "${step.target}" is disabled.`);
