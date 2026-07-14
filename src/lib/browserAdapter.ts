@@ -782,9 +782,11 @@ export async function runTestPlan(
               if (!check) {
                 try {
                   const textContent = await page.evaluate(() => document.body.innerText);
-                  check = textContent.toLowerCase().includes(step.target.toLowerCase());
-                  if (!check && step.target.toLowerCase() === "more information") {
-                    check = textContent.toLowerCase().includes("learn more");
+                  const targetLower = step.target.toLowerCase();
+                  if (targetLower === "more information" || targetLower === "learn more") {
+                    check = textContent.toLowerCase().includes("more information") || textContent.toLowerCase().includes("learn more");
+                  } else {
+                    check = textContent.toLowerCase().includes(targetLower);
                   }
                 } catch {
                   check = false;
@@ -792,9 +794,10 @@ export async function runTestPlan(
               }
 
               if (!check) {
+                const targetLower = step.target.toLowerCase();
                 let prompt = `Is there an element, text, or link containing the text "${step.target}" (ignoring case, spacing, and trailing punctuation like dots) visible on the page?`;
-                if (step.target.toLowerCase() === "more information") {
-                  prompt = `Is there an element, text, or link containing the text "${step.target}" or "Learn more" (ignoring case, spacing, and trailing punctuation like dots) visible on the page?`;
+                if (targetLower === "more information" || targetLower === "learn more") {
+                  prompt = `Is there an element, text, or link containing the text "More information" or "Learn more" (ignoring case, spacing, and trailing punctuation like dots) visible on the page?`;
                 }
                 check = await stagehand!.extract(prompt, z.boolean());
               }
@@ -814,18 +817,21 @@ export async function runTestPlan(
             if (step.value) {
               try {
                 const textContent = await page.evaluate(() => document.body.innerText);
-                check = textContent.toLowerCase().includes(step.value.toLowerCase());
-                if (!check && step.value.toLowerCase() === "more information") {
-                  check = textContent.toLowerCase().includes("learn more");
+                const valueLower = step.value.toLowerCase();
+                if (valueLower === "more information" || valueLower === "learn more") {
+                  check = textContent.toLowerCase().includes("more information") || textContent.toLowerCase().includes("learn more");
+                } else {
+                  check = textContent.toLowerCase().includes(valueLower);
                 }
               } catch {
                 check = false;
               }
 
               if (!check) {
+                const valueLower = step.value.toLowerCase();
                 let prompt = `Is the text "${step.value}" visible on the page?`;
-                if (step.value.toLowerCase() === "more information") {
-                  prompt = `Is the text "${step.value}" or "Learn more" visible on the page?`;
+                if (valueLower === "more information" || valueLower === "learn more") {
+                  prompt = `Is the text "More information" or "Learn more" visible on the page?`;
                 }
                 check = await stagehand!.extract(prompt, z.boolean());
               }

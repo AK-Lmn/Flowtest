@@ -31,7 +31,7 @@ const EXAMPLES = [
     url: "https://example.com",
     instructions: `Open the homepage
 Verify that the page title contains "Example Domain"
-Verify that "More information" is visible
+Verify that "Learn more" is visible
 Scroll to the footer`,
     viewport: "desktop" as const,
   },
