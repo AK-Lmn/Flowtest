@@ -335,10 +335,11 @@ export async function runTestPlan(
         cdpUrl,
       },
       model: {
-        modelName: "google/gemini-1.5-flash",
+        modelName: "google/gemini-3.5-flash",
         apiKey: geminiApiKey,
       },
-      verbose: 1,
+      verbose: process.env.NODE_ENV === "production" ? 0 : 1,
+      disablePino: true,
     });
 
     await stagehand.init();

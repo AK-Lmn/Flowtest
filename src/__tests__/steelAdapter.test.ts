@@ -129,8 +129,9 @@ describe("Steel Stagehand execution adapter tests", () => {
     expect(stagehandConstructorArgs.env).toBe("LOCAL");
     expect(stagehandConstructorArgs.localBrowserLaunchOptions.cdpUrl).toContain("wss://connect.steel.dev");
     expect(stagehandConstructorArgs.localBrowserLaunchOptions.cdpUrl).toContain("apiKey=test-steel-key");
-    expect(stagehandConstructorArgs.model.modelName).toBe("google/gemini-1.5-flash");
+    expect(stagehandConstructorArgs.model.modelName).toBe("google/gemini-3.5-flash");
     expect(stagehandConstructorArgs.model.apiKey).toBe("test-gemini-key");
+    expect(stagehandConstructorArgs.disablePino).toBe(true);
 
     // Check that Stagehand's close was called
     const stagehandInstance = (Stagehand as unknown as Mock).mock.results[0].value;
