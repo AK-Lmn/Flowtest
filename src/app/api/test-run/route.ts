@@ -6,7 +6,7 @@ import { runTestPlan } from "@/lib/browserAdapter";
 
 // Enforce Node.js runtime and configure a maximum function execution duration on Vercel
 export const runtime = "nodejs";
-export const maxDuration = 60; // Max allowed duration on Vercel Pro/Teams
+export const maxDuration = 300;
 
 export async function POST(request: Request) {
   try {
@@ -67,7 +67,7 @@ export async function POST(request: Request) {
   } catch (error: unknown) {
     const err = error as Error;
     console.error("Test Run API handler encountered an unhandled error:", err);
-    
+
     // Return structured INTERNAL_ERROR instead of raw stack traces
     const errorResult: TestRunResult = {
       id: `err_${Date.now()}`,
